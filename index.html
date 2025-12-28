@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Tarot AR - Faster Scroll</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Times New Roman', serif; color: #fff; }
+        
+        #input-video { 
+            position: fixed; top: 0; left: 0; 
+            width: 100%; height: 100%; object-fit: cover;
+            opacity: 0; z-index: -10; pointer-events: none; 
+        } 
+        
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+        
+        #guide-text {
+            position: absolute; width: 100%; text-align: center;
+            color: #fff; letter-spacing: 3px; font-weight: normal;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); pointer-events: none;
+            transition: opacity 0.5s; text-transform: uppercase;
+            font-size: 0.6rem; bottom: 2%; 
+        }
+
+        #counter {
+            position: absolute; top: 30px; right: 40px;
+            font-size: 1.2rem; color: #fff; font-weight: bold;
+            border: 1px solid rgba(255, 255, 255, 0.5); padding: 5px 15px; border-radius: 30px;
+            background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(5px);
+        }
+
+        #credit-text {
+            position: absolute; 
+            color: rgba(255, 255, 255, 0.6); font-family: sans-serif; font-size: 0.8rem;
+            pointer-events: none; z-index: 5; letter-spacing: 1px;
+            text-shadow: 0 0 5px rgba(0,0,0,0.5);
+            bottom: 10px; right: 5px;
+        }
+
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 10; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center;
+            transition: opacity 1.5s ease-out; pointer-events: auto;
+        }
+        .loader-content { opacity: 0.8; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+
+        #virtual-cursor {
+            position: absolute; width: 30px; height: 30px;
+            border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%;
+            transform: translate(-50%, -50%); pointer-events: none;
+            z-index: 100; display: none; transition: transform 0.1s;
+            box-shadow: 0 0 10px rgba(255,255,255,0.6);
+        }
+        #virtual-cursor.pinching { 
+            background: #fff; width: 15px; height: 15px; border: none; 
+            box-shadow: 0 0 20px #fff, 0 0 40px #fff; 
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+        
+        #result-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 80%; max-width: 900px; max-height: 80vh; overflow-y: auto;
+            background: rgba(10, 10, 10, 0.95); border: 1px solid #fff; 
+            padding: 50px; display: none; pointer-events: auto; 
+            box-shadow: 0 0 100px rgba(255,255,255,0.1); border-radius: 4px; z-index: 20;
+        }
+        #result-modal::-webkit-scrollbar { width: 6px; }
+        
+        #result-modal h2 { 
+            color: #fff; text-align: center; border-bottom: 1px solid #333; 
+            padding-bottom: 20px; margin-top: 0; text-transform: uppercase; 
+            letter-spacing: 4px; font-weight: normal; font-size: 1.8rem;
+        }
+        
+        .reading-section { margin-bottom: 40px; border-bottom: 1px solid #222; padding-bottom: 20px; animation: fadeIn 1.5s ease-out; }
+        .reading-label { color: #888; font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 15px; display: block;}
+        .reading-body { display: flex; gap: 30px; align-items: start; }
+        .reading-img { width: 100px; border-radius: 4px; filter: grayscale(0.2); transition: filter 0.5s; }
+        .reading-img:hover { filter: grayscale(0); }
+        .reading-content h3 { margin: 0 0 10px 0; color: #fff; font-size: 1.5rem; font-weight: normal; }
+        .reading-desc { color: #ccc; line-height: 1.6; font-size: 1rem; text-align: justify; font-weight: 300; }
+        
+        button.restart-btn { 
+            display: block; margin: 40px auto 0; padding: 15px 50px; 
+            background: transparent; border: 1px solid #fff; color: #fff; 
+            cursor: pointer; font-family: serif; letter-spacing: 3px; text-transform: uppercase;
+            font-size: 0.9rem; transition: all 0.5s; 
+        }
+        button.restart-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px #fff; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <video id="input-video" playsinline autoplay muted></video>
+    <div id="canvas-container"></div>
+    <div id="virtual-cursor"></div>
+    
+    <div id="ui-layer">
+        <div id="counter">0 / 3</div>
+        <div id="guide-text">Đưa tay lên trước Camera để bắt đầu</div>
+        <div id="credit-text">tieens</div>
+        
+        <div id="result-modal">
+            <h2>Lời Tiên Tri</h2>
+            <div id="final-reading"></div>
+            <button class="restart-btn" onclick="location.reload()">Trải Bài Mới</button>
+        </div>
+    </div>
+
+    <div id="loading">
+        <div class="loader-content">
+            <div style="font-size: 2rem; color: #fff;">✦</div>
+            <div style="font-size: 0.8rem; color: #888; letter-spacing: 4px; margin-top: 10px;">LOADING...</div>
+        </div>
+    </div>
+
+    <!-- Question / API key modal (display before allowing draw) -->
+    <div id="question-modal" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:30;background:rgba(0,0,0,0.7);">
+        <div style="background:#070707;border:1px solid #333;padding:24px;border-radius:8px;width:min(720px,90%);color:#fff;">
+            <h3 style="margin:0 0 8px 0;">Hỏi điều bạn muốn biết</h3>
+            <textarea id="user-question" placeholder="Viết câu hỏi của bạn (ví dụ: 'Tình cảm trong 6 tháng tới')" style="width:100%;height:80px;padding:8px;border-radius:6px;border:1px solid #333;background:#000;color:#fff;"></textarea>
+            <div style="height:8px"></div>
+            <input id="openai-key" type="password" placeholder="Nhập API Key (khuyến nghị: dán tạm thời, sẽ không lưu vào file)" style="width:100%;padding:8px;border-radius:6px;border:1px solid #333;background:#000;color:#fff;">
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+                <label style="font-size:0.9rem;color:#ccc;"><input id="remember-key" type="checkbox"> Lưu tạm trong phiên (session)</label>
+                <div style="flex:1"></div>
+                <button id="start-btn" style="padding:10px 18px;border-radius:6px;border:1px solid #fff;background:#111;color:#fff;cursor:pointer;">Bắt đầu</button>
+            </div>
+            <div id="question-error" style="color:#f66;margin-top:8px;display:none;font-size:0.9rem"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA ---
+        // Local TAROT_DATA (78 cards) loaded from `card/` folder.
+        const TAROT_DATA = [
+            //Major Arcana
+            { name: "The Fool", url: "card/major_arcana/0_fool.jpg", meaning: "Khởi đầu, ngây thơ, bước nhảy tin tưởng; tiềm năng mới." },
+            { name: "The Magician", url: "card/major_arcana/1_magician.jpg", meaning: "Ý chí, kỹ năng, biến ý tưởng thành hành động." },
+            { name: "The High Priestess", url: "card/major_arcana/2_high_priestess.jpg", meaning: "Trực giác, bí mật, thông điệp từ tiềm thức." },
+            { name: "The Empress", url: "card/major_arcana/3_empress.jpg", meaning: "Sinh sôi, nuôi dưỡng, sáng tạo và phong phú." },
+            { name: "The Emperor", url: "card/major_arcana/4_emperor.jpg", meaning: "Quyền lực, trật tự, cấu trúc và bảo vệ." },
+            { name: "The Hierophant", url: "card/major_arcana/5_hierophant.jpg", meaning: "Truyền thống, giáo lý, hướng dẫn và học hỏi." },
+            { name: "The Lovers", url: "card/major_arcana/6_lovers.jpg", meaning: "Tình yêu, lựa chọn đạo đức, giá trị chung." },
+            { name: "The Chariot", url: "card/major_arcana/7_chariot.jpg", meaning: "Quyết tâm, kiểm soát, tiến về mục tiêu." },
+            { name: "The Strength", url: "card/major_arcana/8_strength.jpg", meaning: "Lòng dũng cảm, kiên nhẫn, sức mạnh nội tâm." },
+            { name: "The Hermit", url: "card/major_arcana/9_hermit.jpg", meaning: "Nội quán, tìm kiếm chân lý, cô độc có ý nghĩa." },
+            { name: "The Wheel Of Fortune", url: "card/major_arcana/10_wheel_of_fortune.jpg", meaning: "Vận mệnh, chu kỳ thay đổi, cơ hội bất ngờ." },
+            { name: "The Justice", url: "card/major_arcana/11_justice.jpg", meaning: "Công bằng, nhân quả, quyết định công minh." },
+            { name: "The Hanged Man", url: "card/major_arcana/12_hanged_man.jpg", meaning: "Buông bỏ, đổi góc nhìn, tạm ngưng để thấu suốt." },
+            { name: "Death", url: "card/major_arcana/13_death.jpg", meaning: "Kết thúc để chuyển hóa, tái sinh và thay đổi sâu sắc." },
+            { name: "Temperance", url: "card/major_arcana/14_temperance.jpg", meaning: "Cân bằng, điều độ, hòa hợp và chữa lành." },
+            { name: "The Devil", url: "card/major_arcana/15_devil.jpg", meaning: "Ràng buộc, cám dỗ, bị chi phối bởi dục vọng hoặc nỗi sợ." },
+            { name: "The Tower", url: "card/major_arcana/16_tower.jpg", meaning: "Sụp đổ đột ngột, phá vỡ ảo tưởng, thức tỉnh." },
+            { name: "The Star", url: "card/major_arcana/17_star.jpg", meaning: "Hy vọng, cảm hứng, chữa lành tinh thần." },
+            { name: "The Moon", url: "card/major_arcana/18_moon.jpg", meaning: "Ảo ảnh, bất an, trực giác và những điều chưa rõ." },
+            { name: "The Sun", url: "card/major_arcana/19_sun.jpg", meaning: "Rõ ràng, niềm vui, thành công và thịnh vượng tinh thần." },
+            { name: "Judgement", url: "card/major_arcana/20_judgement.jpg", meaning: "Thức tỉnh, tái đánh giá, gọi mời hành động thay đổi." },
+            { name: "The World", url: "card/major_arcana/21_world.jpg", meaning: "Hoàn tất, viên mãn, kết thúc chu kỳ thành công." },
+            //Cups
+            { name: "Ace of Cups", url: "card/cups/22_ace_cups.jpg", meaning: "Cảm xúc mới — liên quan tới tình cảm và khởi đầu cảm xúc." },
+            { name: "Two of Cups", url: "card/cups/23_two_cups.jpg", meaning: "Gắn kết — đối tác, kết nối tình cảm." },
+            { name: "Three of Cups", url: "card/cups/24_three_cups.jpg", meaning: "Niềm vui — lễ hội, tình bạn, hạnh phúc chung." },
+            { name: "Four of Cups", url: "card/cups/25_four_cups.jpg", meaning: "Chán nản — cảm thấy thờ ơ, cần nhìn nhận lại." },
+            { name: "Five of Cups", url: "card/cups/26_five_cups.jpg", meaning: "Mất mát — đau buồn, tiếc nuối." },
+            { name: "Six of Cups", url: "card/cups/27_six_cups.jpg", meaning: "Ký ức — quá khứ, hoài niệm." },
+            { name: "Seven of Cups", url: "card/cups/28_seven_cups.jpg", meaning: "Lựa chọn mơ hồ — ảo tưởng, nhiều khả năng nhưng thiếu rõ ràng." },
+            { name: "Eight of Cups", url: "card/cups/29_eight_cups.jpg", meaning: "Buông bỏ — rời bỏ để tìm ý nghĩa mới." },
+            { name: "Nine of Cups", url: "card/cups/30_nine_cups.jpg", meaning: "Thỏa mãn — hài lòng về cảm xúc, ước nguyện." },
+            { name: "Ten of Cups", url: "card/cups/31_ten_cups.jpg", meaning: "Hạnh phúc viên mãn — gia đình, trọn vẹn tình cảm." },
+            { name: "Page of Cups", url: "card/cups/32_page_cups.jpg", meaning: "Cảm xúc non trẻ — tò mò về tình cảm mới." },
+            { name: "Knight of Cups", url: "card/cups/33_knight_cups.jpg", meaning: "Lãng mạn — hành động theo cảm xúc, mời gọi tình yêu." },
+            { name: "Queen of Cups", url: "card/cups/34_queen_cups.jpg", meaning: "Đồng cảm — trực giác cảm xúc, chăm sóc người khác." },
+            { name: "King of Cups", url: "card/cups/35_king_cups.jpg", meaning: "Kiểm soát cảm xúc — cân bằng và chín chắn trong tình cảm." },
+            //Pentacles
+            { name: "Ace of Pentacles", url: "card/pentacles/36_ace_pentacles.jpg", meaning: "Cơ hội tài chính — khởi đầu về vật chất hoặc cơ hội kinh tế." },
+            { name: "Two of Pentacles", url: "card/pentacles/37_two_pentacles.jpg", meaning: "Cân bằng — quản lý tài chính và ưu tiên công việc." },
+            { name: "Three of Pentacles", url: "card/pentacles/38_three_pentacles.jpg", meaning: "Hợp tác — làm việc nhóm, kỹ năng nghề nghiệp." },
+            { name: "Four of Pentacles", url: "card/pentacles/39_four_pentacles.jpg", meaning: "Giữ chặt — tiết kiệm, sợ mất mát." },
+            { name: "Five of Pentacles", url: "card/pentacles/40_five_pentacles.jpg", meaning: "Thiếu thốn — khó khăn về vật chất." },
+            { name: "Six of Pentacles", url: "card/pentacles/41_six_pentacles.jpg", meaning: "Cho – nhận — hào phóng hoặc nhận giúp đỡ." },
+            { name: "Seven of Pentacles", url: "card/pentacles/42_seven_pentacles.jpg", meaning: "Kiên nhẫn — đợi kết quả từ nỗ lực lâu dài." },
+            { name: "Eight of Pentacles", url: "card/pentacles/43_eight_pentacles.jpg", meaning: "Chăm chỉ — rèn luyện kỹ năng, cống hiến." },
+            { name: "Nine of Pentacles", url: "card/pentacles/44_nine_pentacles.jpg", meaning: "Sung túc — độc lập về tài chính, tận hưởng thành quả." },
+            { name: "Ten of Pentacles", url: "card/pentacles/45_ten_pentacles.jpg", meaning: "Thịnh vượng lâu dài — di sản, an toàn tài chính." },
+            { name: "Page of Pentacles", url: "card/pentacles/46_page_pentacles.jpg", meaning: "Học hỏi — bắt đầu học nghề hoặc cơ hội nghề nghiệp." },
+            { name: "Knight of Pentacles", url: "card/pentacles/47_knight_pentacles.jpg", meaning: "Bền bỉ — kiên định trong công việc." },
+            { name: "Queen of Pentacles", url: "card/pentacles/48_queen_pentacles.jpg", meaning: "Thực tế, chu đáo — quản lý tài sản, chăm lo thực tế." },
+            { name: "King of Pentacles", url: "card/pentacles/49_king_pentacles.jpg", meaning: "Thành đạt — thành công về vật chất và lãnh đạo kinh tế." },
+            //Swords
+            { name: "Ace of Swords", url: "card/swords/50_ace_swords.jpg", meaning: "Sự thật rõ ràng — nhận thức, sự thật được phơi bày." },
+            { name: "Two of Swords", url: "card/swords/51_two_swords.jpg", meaning: "Do dự — bế tắc, cần quyết định." },
+            { name: "Three of Swords", url: "card/swords/52_three_swords.jpg", meaning: "Đau lòng — thất vọng, tan vỡ." },
+            { name: "Four of Swords", url: "card/swords/53_four_swords.jpg", meaning: "Nghỉ ngơi — phục hồi, tạm dừng chiến đấu." },
+            { name: "Five of Swords", url: "card/swords/54_five_swords.jpg", meaning: "Thất bại cay đắng — xung đột, thua thiệt." },
+            { name: "Six of Swords", url: "card/swords/55_six_swords.jpg", meaning: "Chuyển tiếp — rời khỏi khó khăn về tinh thần." },
+            { name: "Seven of Swords", url: "card/swords/56_seven_swords.jpg", meaning: "Gian dối — lừa lọc, hành động bí mật." },
+            { name: "Eight of Swords", url: "card/swords/57_eight_swords.jpg", meaning: "Tự trói buộc — giới hạn bản thân, sợ hãi." },
+            { name: "Nine of Swords", url: "card/swords/58_nine_swords.jpg", meaning: "Lo âu — ám ảnh, mất ngủ, sợ hãi nội tâm." },
+            { name: "Ten of Swords", url: "card/swords/59_ten_swords.jpg", meaning: "Kết thúc đau đớn — tận cùng sự thất bại hoặc kết thúc đau thương." },
+            { name: "Page of Swords", url: "card/swords/60_page_swords.jpg", meaning: "Tò mò, cảnh giác — tìm hiểu, tinh thần cảnh giác." },
+            { name: "Knight of Swords", url: "card/swords/61_knight_swords.jpg", meaning: "Quyết liệt — hành động nhanh, khảng khái." },
+            { name: "Queen of Swords", url: "card/swords/62_queen_swords.jpg", meaning: "Sắc bén, thẳng thắn — phân tích, công bằng." },
+            { name: "King of Swords", url: "card/swords/63_king_swords.jpg", meaning: "Lý trí, công bằng — quyết định dựa trên trí tuệ." },
+            //Wands
+            { name: "Ace of Wands", url: "card/wands/64_ace_wands.jpg", meaning: "Khởi đầu mới — ý chí, đam mê, khởi phát hành động." },
+            { name: "Two of Wands", url: "card/wands/65_two_wands.jpg", meaning: "Lập kế hoạch, mở rộng — lên chiến lược cho tương lai." },
+            { name: "Three of Wands", url: "card/wands/66_three_wands.jpg", meaning: "Lập kế hoạch, mở rộng — triển khai và chờ kết quả." },
+            { name: "Four of Wands", url: "card/wands/67_four_wands.jpg", meaning: "Ổn định — thành tựu ban đầu, ăn mừng." },
+            { name: "Five of Wands", url: "card/wands/68_five_wands.jpg", meaning: "Cạnh tranh — xung đột nhỏ, thử thách cạnh tranh." },
+            { name: "Six of Wands", url: "card/wands/69_six_wands.jpg", meaning: "Chiến thắng — công nhận, thành công." },
+            { name: "Seven of Wands", url: "card/wands/70_seven_wands.jpg", meaning: "Bảo vệ vị trí — giữ vững lập trường trước thử thách." },
+            { name: "Eight of Wands", url: "card/wands/71_eight_wands.jpg", meaning: "Tiến triển nhanh — sự kiện vận tốc cao, tiến triển." },
+            { name: "Nine of Wands", url: "card/wands/72_nine_wands.jpg", meaning: "Kiệt sức nhưng chưa bỏ cuộc — bền bỉ cuối cùng." },
+            { name: "Ten of Wands", url: "card/wands/73_ten_wands.jpg", meaning: "Gánh nặng — quá tải trách nhiệm." },
+            { name: "Page of Wands", url: "card/wands/74_page_wands.jpg", meaning: "Nhiệt huyết mới — ý tưởng và khởi xướng." },
+            { name: "Knight of Wands", url: "card/wands/75_knight_wands.jpg", meaning: "Hành động bốc đồng — nhanh, nhiệt huyết nhưng có phần liều." },
+            { name: "Queen of Wands", url: "card/wands/76_queen_wands.jpg", meaning: "Tự tin, sáng tạo — lãnh đạo bằng sức hút và cảm hứng." },
+            { name: "King of Wands", url: "card/wands/77_king_wands.jpg", meaning: "Lãnh đạo, tầm nhìn — dẫn dắt, chiến lược dài hạn." }
+];
+        
+
+        // --- CẤU HÌNH FINAL ---
+        const CONFIG = {
+            cardCount: TAROT_DATA.length, 
+            radius: 5.5, 
+            visibleCount: 15,
+            cardWidth: 1.4, cardHeight: 2.4, 
+            inspectPos: { x: 0, y: 0, z: 3.8 }, 
+            inspectScale: 0.5,    
+            storageScale: 0.09,   
+            storageZ: 3.5, 
+            storeMarginX: 0.1,    
+            storeMarginTop: 1.1,  
+            storeGapY: 0.25       
+        };
+
+        let scene, camera, renderer, cardGroup, textureLoader;
+        let raycaster, mouse;
+        let starFieldMesh;
+        let explosions = [];
+        let storedCards = [];
+        let inspectingCard = null;
+        let isGameActive = true;
+        let particleTexture;
+
+        let handX = 0.5; 
+        let isPinching = false;
+        let cursorPosition = { x: 0, y: 0 };
+        let rotationSpeed = 0.006;
+        let userQuestion = null;
+        let openaiKey = null;
+        let allowDraw = false; // only allow draw after question submitted
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // --- TẠO HẠT MÀU TRẮNG ---
+        function generateParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');      // Trắng
+            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)'); 
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');     
+            
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            
+            const tex = new THREE.Texture(canvas);
+            tex.needsUpdate = true;
+            return tex;
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.02);
+            
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 5);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            container.appendChild(renderer.domElement);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6); 
+            scene.add(ambient);
+            const spotLight = new THREE.SpotLight(0xffffff, 2.0); 
+            spotLight.position.set(0, 10, 10); 
+            scene.add(spotLight);
+
+            textureLoader = new THREE.TextureLoader();
+            particleTexture = generateParticleTexture(); 
+            
+            shuffleArray(TAROT_DATA);
+            createCards();
+            createBackgroundStars();
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            document.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('resize', onResize);
+            
+            setTimeout(() => {
+                document.getElementById('loading').style.opacity = 0;
+                setTimeout(()=>document.getElementById('loading').style.display='none', 1500);
+            }, 2000);
+        }
+
+        // Hook up question modal controls
+        (function setupQuestionModal(){
+            const modal = document.getElementById('question-modal');
+            const btn = document.getElementById('start-btn');
+            const keyInput = document.getElementById('openai-key');
+            const remember = document.getElementById('remember-key');
+            const errorEl = document.getElementById('question-error');
+
+            // prefill key from sessionStorage if present
+            const stored = sessionStorage.getItem('OPENAI_KEY');
+            if (stored) keyInput.value = stored;
+
+            btn.addEventListener('click', async () => {
+                const q = document.getElementById('user-question').value.trim();
+                const k = keyInput.value.trim();
+                errorEl.style.display = 'none';
+                if (!q) { errorEl.innerText = 'Vui lòng nhập câu hỏi.'; errorEl.style.display='block'; return; }
+                if (!k) { errorEl.innerText = 'Vui lòng nhập API key để sử dụng AI (hoặc dán tạm thời).'; errorEl.style.display='block'; return; }
+                userQuestion = q;
+                openaiKey = k;
+                if (remember.checked) sessionStorage.setItem('OPENAI_KEY', k);
+                modal.style.display = 'none';
+                allowDraw = true;
+                document.getElementById('guide-text').innerText = 'Đưa tay lên trước Camera để bắt đầu';
+            });
+        })();
+
+        function createBackgroundStars() {
+            const starCount = 800;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const sizes = [];
+            for(let i=0; i<starCount; i++) {
+                positions.push((Math.random()-0.5)*60, (Math.random()-0.5)*40, (Math.random()-0.5)*50 - 10);
+                sizes.push(Math.random() * 0.5 + 0.1);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+            const sprite = textureLoader.load('sparkle.png', undefined, undefined, (err) => {});
+            const mat = new THREE.PointsMaterial({
+                size: 0.8, map: sprite, transparent: true, opacity: 0.9,
+                depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffffff
+            });
+            starFieldMesh = new THREE.Points(geo, mat);
+            scene.add(starFieldMesh);
+        }
+
+        function createCards() {
+            cardGroup = new THREE.Group();
+            scene.add(cardGroup);
+            const geo = new THREE.BoxGeometry(CONFIG.cardWidth, CONFIG.cardHeight, 0.02);
+            const backTex = textureLoader.load('back.png', undefined, undefined, (err) => {});
+            const matEdge = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }); 
+            // Determine which card indices to place on the visible outer ring to control spacing
+            const visibleCount = Math.max(3, Math.min(CONFIG.visibleCount || 9, CONFIG.cardCount));
+            const step = Math.floor(CONFIG.cardCount / visibleCount);
+            const displaySet = new Set();
+            for (let k = 0; k < visibleCount; k++) {
+                displaySet.add((k * step) % CONFIG.cardCount);
+            }
+
+            let displayIndex = 0;
+            TAROT_DATA.forEach((data, i) => {
+                const frontTex = textureLoader.load(data.url);
+                const matFront = new THREE.MeshStandardMaterial({ map: frontTex });
+                const matBack = new THREE.MeshStandardMaterial({ map: backTex, color: 0xffffff });
+                const materials = [matEdge, matEdge, matEdge, matEdge, matBack, matFront];
+                const card = new THREE.Mesh(geo, materials);
+
+                // randomly determine if the card is reversed (upside-down)
+                const isReversed = Math.random() < 0.5;
+
+                if (displaySet.has(i)) {
+                    // place on outer ring with even spacing
+                    const angle = (displayIndex / visibleCount) * Math.PI * 2;
+                    card.position.set(Math.sin(angle) * CONFIG.radius, 0, Math.cos(angle) * CONFIG.radius);
+                    card.lookAt(0, 0, 0);
+                    // apply vertical flip if reversed
+                    if (isReversed) card.rotateZ(Math.PI);
+                    displayIndex++;
+                    card.visible = true;
+                } else {
+                    // move hidden cards farther back and hide to avoid dense stacking
+                    card.position.set(0, -10, -30 - (i % 5));
+                    card.scale.setScalar(0.0001);
+                    card.visible = false; // hidden from view and raycasting
+                }
+
+                card.userData = { id: i, data: data, isPicked: false, reversed: !!isReversed };
+                cardGroup.add(card);
+            });
+        }
+
+        // --- HIỆU ỨNG NỔ HẠT (Bé, Chậm, Trắng) ---
+        function createExplosion(position) {
+            const particleCount = 150;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            const sizes = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(position.x, position.y, position.z); 
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                const speed = Math.random() * 0.03 + 0.01; 
+
+                velocities.push(
+                    speed * Math.sin(phi) * Math.cos(theta),
+                    speed * Math.sin(phi) * Math.sin(theta),
+                    speed * Math.cos(phi)
+                );
+                
+                sizes.push(Math.random() * 0.15 + 0.05); 
+            }
+
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.2,
+                map: particleTexture, 
+                transparent: true, 
+                opacity: 0.9,
+                depthWrite: false, 
+                blending: THREE.AdditiveBlending, 
+                color: 0xffffff 
+            });
+
+            const points = new THREE.Points(geo, mat);
+            scene.add(points);
+            explosions.push({ mesh: points, velocities: velocities, age: 0 });
+        }
+
+        function updateExplosions() {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const ex = explosions[i];
+                const positions = ex.mesh.geometry.attributes.position.array;
+                ex.age += 1;
+                for (let j = 0; j < ex.velocities.length / 3; j++) {
+                    positions[j*3] += ex.velocities[j*3];
+                    positions[j*3+1] += ex.velocities[j*3+1];
+                    positions[j*3+2] += ex.velocities[j*3+2];
+                }
+                ex.mesh.geometry.attributes.position.needsUpdate = true;
+                ex.mesh.material.opacity = 1 - (ex.age / 60); 
+                ex.mesh.scale.setScalar(1 + ex.age * 0.01); 
+                if (ex.age > 60) {
+                    scene.remove(ex.mesh);
+                    ex.mesh.geometry.dispose();
+                    explosions.splice(i, 1);
+                }
+            }
+        }
+
+        function updateCounter() {
+            document.getElementById('counter').innerText = `${storedCards.length} / 3`;
+            if (storedCards.length === 3) {
+                document.getElementById('guide-text').innerText = "Định mệnh đã an bài...";
+                setTimeout(revealReading, 2000);
+            }
+        }
+
+        function pickCard(card) {
+            if (inspectingCard || storedCards.length >= 3 || card.userData.isPicked) return;
+            card.userData.isPicked = true; inspectingCard = card;
+            scene.attach(card);
+            // move to inspect position; preserve reversed state in z rotation
+            const targetZ = card.userData.reversed ? Math.PI : 0;
+            new TWEEN.Tween(card.position).to(CONFIG.inspectPos, 1000).easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(card.rotation).to({ x: 0, y: Math.PI, z: targetZ }, 1000).easing(TWEEN.Easing.Back.Out).start();
+            
+            const targetScale = CONFIG.inspectScale;
+            new TWEEN.Tween(card.scale).to({ x: targetScale, y: targetScale, z: targetScale }, 1000)
+                .onComplete(() => { 
+                    setTimeout(() => {
+                        createExplosion(card.position);
+                        setTimeout(storeCard, 100); 
+                    }, 1500); 
+                }).start();
+        }
+
+        function getSafeVerticalLeftPosition(index) {
+            const dist = camera.position.z - CONFIG.storageZ;
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+            const visibleWidth = visibleHeight * camera.aspect;
+
+            const leftEdge = -visibleWidth / 2;
+            const topEdge = visibleHeight / 2;
+
+            const x = leftEdge + CONFIG.storeMarginX;
+            const y = topEdge - CONFIG.storeMarginTop - (index * CONFIG.storeGapY);
+
+            return { x, y, z: CONFIG.storageZ };
+        }
+
+        function storeCard() {
+            if (!inspectingCard) return;
+            const card = inspectingCard; storedCards.push(card); inspectingCard = null;
+            const index = storedCards.length - 1;
+
+            const pos = getSafeVerticalLeftPosition(index);
+            const scale = CONFIG.storageScale;
+
+            new TWEEN.Tween(card.position).to({ x: pos.x, y: pos.y, z: pos.z }, 800).easing(TWEEN.Easing.Exponential.Out).start();
+            new TWEEN.Tween(card.scale).to({ x: scale, y: scale, z: scale }, 800).start();
+                
+            updateCounter();
+            repositionStoredCards(); 
+        }
+
+        function repositionStoredCards() {
+            const scale = CONFIG.storageScale;
+            storedCards.forEach((c, i) => {
+                const pos = getSafeVerticalLeftPosition(i);
+                new TWEEN.Tween(c.position).to({ x: pos.x, y: pos.y, z: pos.z }, 500).start();
+                new TWEEN.Tween(c.scale).to({ x: scale, y: scale, z: scale }, 500).start();
+            });
+        }
+
+        function revealReading() {
+            isGameActive = false;
+            document.getElementById('ui-layer').style.pointerEvents = "auto";
+            document.getElementById('guide-text').style.opacity = 0;
+            document.getElementById('virtual-cursor').style.display = 'none';
+            const content = document.getElementById('final-reading');
+            const contexts = ["QUÁ KHỨ", "HIỆN TẠI", "TƯƠNG LAI"];
+            // Generate AI-based readings if question+key provided
+            content.innerHTML = '<div style="color:#ccc">Đang tạo lời giải thích...</div>';
+            document.getElementById('result-modal').style.display = 'block';
+
+            (async () => {
+                // build payload for AI: list of 3 stored cards with name, reversed, context
+                const cardsForAI = storedCards.map((c, i) => ({
+                    name: c.userData.data.name,
+                    reversed: !!c.userData.reversed,
+                    position: contexts[i]
+                }));
+
+                // fallback: if no API key or question, just show existing meanings
+                if (!openaiKey || !userQuestion) {
+                    let html = '';
+                    storedCards.forEach((c, i) => {
+                        const data = c.userData.data;
+                        const isRev = !!c.userData.reversed;
+                        const revStyle = isRev ? 'transform: rotate(180deg);' : '';
+                        const revLabel = isRev ? ' (Ngược)' : '';
+                        html += `
+                        <div class="reading-section">
+                            <span class="reading-label">✦ ${contexts[i]}</span>
+                            <div class="reading-body">
+                                <img src="${data.url}" class="reading-img" style="${revStyle}">
+                                <div class="reading-content">
+                                    <h3>${data.name}${revLabel}</h3>
+                                    <div class="reading-desc">${data.meaning}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                    content.innerHTML = html;
+                    return;
+                }
+
+                try {
+                    const prompt = `
+                        Bạn là một Tarot Reader chuyên nghiệp, trung lập và có chiều sâu diễn giải.
+                        Người hỏi đặt câu hỏi: "${userQuestion}"
+
+                        Hãy giải thích trải bài 3 lá dựa trên:
+                        - Tên lá bài
+                        - Xuôi hay ngược
+                        - Vị trí: Quá khứ / Hiện tại / Tương lai
+                        - Ngữ cảnh câu hỏi
+
+                        Yêu cầu:
+                        - Viết bằng TIẾNG VIỆT
+                        - Giọng trung lập, huyền học
+                        - Không khẳng định tuyệt đối tương lai
+                        - Diễn giải theo đúng NGỮ CẢNH câu hỏi
+
+                        VỚI MỖI LÁ BÀI:
+                        - Luận ý nghĩa của lá trong ĐÚNG vị trí thời gian
+                        - Giải thích ảnh hưởng của việc lá xuôi hoặc ngược
+                        - Liên hệ trực tiếp đến câu hỏi người hỏi
+                        - Viết khoảng 3–5 câu , có chiều sâu
+
+                        SAU KHI LUẬN ĐỦ 3 LÁ:
+                        - Viết MỘT đoạn TỔNG KẾT chung cho cả trải bài
+                        - Tổng kết xu hướng, dòng năng lượng chung
+                        - KHÔNG nhắc lại từng lá
+
+                        Trả về JSON:
+                        {
+                        "cards": [
+                            { "index": 0, "meaning": "..." },
+                            { "index": 1, "meaning": "..." },
+                            { "index": 2, "meaning": "..." }
+                        ],
+                        "summary": "..."
+                        }
+                        `;
+
+                    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${openaiKey}`
+                        },
+                        body: JSON.stringify({
+                            model: 'gpt-4o-mini',
+                            messages: [
+                                { role: 'system', content: 'You are a helpful tarot reader.' },
+                                { role: 'user', content: prompt },
+                                { role: 'user', content: JSON.stringify({cards: cardsForAI}) }
+                            ],
+                            temperature: 0.7,
+                            max_tokens: 700
+                        })
+                    });
+
+                    if (!resp.ok) throw new Error('AI request failed: ' + resp.status + ' ' + resp.statusText);
+                    const j = await resp.json();
+                    const text = j?.choices?.[0]?.message?.content || j?.choices?.[0]?.text;
+                    // try to extract JSON from model output
+                    let parsed;
+                    try {
+                        parsed = JSON.parse(text);
+                    } catch {
+                        const match = text.match(/\{[\s\S]*\}/);
+                        if (!match) throw new Error("Không tìm thấy JSON Tarot");
+                        parsed = JSON.parse(match[0]);
+                    }
+
+                    if (!parsed.cards || !Array.isArray(parsed.cards)) {
+                        throw new Error("JSON Tarot sai cấu trúc");
+                    }
+
+                    // map meanings back to storedCards
+                    parsed.cards.forEach(item => {
+                        const idx = item.index;
+                        if (typeof idx === 'number' && storedCards[idx]) {
+                            storedCards[idx].userData.data.meaning = item.meaning;
+                        }
+                    });
+
+                    // render updated modal
+                    let html = '';
+                    storedCards.forEach((c, i) => {
+                        const data = c.userData.data;
+                        const isRev = !!c.userData.reversed;
+                        const revStyle = isRev ? 'transform: rotate(180deg);' : '';
+                        const revLabel = isRev ? ' (Lá Bài Ngược)' : '';
+                        html += `
+                        <div class="reading-section">
+                            <span class="reading-label">✦ ${contexts[i]}</span>
+                            <div class="reading-body">
+                                <img src="${data.url}" class="reading-img" style="${revStyle}">
+                                <div class="reading-content">
+                                    <h3>${data.name}${revLabel}</h3>
+                                    <div class="reading-desc">${data.meaning}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                    if (parsed.summary) {
+                        html += `
+                        <div class="reading-section">
+                            <span class="reading-label">✦ TỔNG KẾT TRẢI BÀI</span>
+                            <div class="reading-body">
+                                <div class="reading-content">
+                                    <div class="reading-desc">${parsed.summary}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    }
+                    content.innerHTML = html;
+                } catch (err) {
+                    console.error(err);
+                    // on error, show fallback meanings
+                    let html = '';
+                    storedCards.forEach((c, i) => {
+                        const data = c.userData.data;
+                        const isRev = !!c.userData.reversed;
+                        const revStyle = isRev ? 'transform: rotate(180deg);' : '';
+                        const revLabel = isRev ? ' (Ngược)' : '';
+                        html += `
+                        <div class="reading-section">
+                            <span class="reading-label">✦ ${contexts[i]}</span>
+                            <div class="reading-body">
+                                <img src="${data.url}" class="reading-img" style="${revStyle}">
+                                <div class="reading-content">
+                                    <h3>${data.name}${revLabel}</h3>
+                                    <div class="reading-desc">${data.meaning}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                    content.innerHTML = html;
+                }
+            })();
+        }
+
+        function onMouseDown(event) {
+            if (!isGameActive || storedCards.length >= 3) return;
+            if (!allowDraw) {
+                // prompt to answer question first
+                document.getElementById('question-modal').style.display = 'flex';
+                return;
+            }
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cardGroup.children);
+            if (intersects.length > 0) pickCard(intersects[0].object);
+        }
+
+        function onResults(results) {
+            const cursor = document.getElementById('virtual-cursor');
+            const guide = document.getElementById('guide-text');
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                if(storedCards.length === 0) guide.innerText = "Chụm ngón cái và trỏ để chọn";
+                handX = 1 - lm[9].x; 
+                const x = (lm[8].x + lm[4].x) / 2;
+                const y = (lm[8].y + lm[4].y) / 2;
+                const screenX = (1 - x) * window.innerWidth;
+                const screenY = y * window.innerHeight;
+                
+                cursor.style.display = 'block'; 
+                cursor.style.left = `${screenX}px`; 
+                cursor.style.top = `${screenY}px`;
+                
+                cursorPosition.x = (screenX / window.innerWidth) * 2 - 1;
+                cursorPosition.y = -(screenY / window.innerHeight) * 2 + 1;
+
+                const distance = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+                const isPinchingNow = distance < 0.08; 
+
+                if (isPinchingNow && !isPinching) {
+                    cursor.classList.add('pinching'); 
+                    if (isGameActive) {
+                        raycaster.setFromCamera(cursorPosition, camera);
+                        const intersects = raycaster.intersectObjects(cardGroup.children);
+                        if (intersects.length > 0) {
+                            pickCard(intersects[0].object);
+                        }
+                    }
+                } else if (!isPinchingNow) {
+                    cursor.classList.remove('pinching');
+                }
+                isPinching = isPinchingNow;
+            } else {
+                cursor.style.display = 'none';
+            }
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; 
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            repositionStoredCards();
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate); 
+            TWEEN.update(time);
+            updateExplosions(); 
+
+            if (isGameActive) {
+                let targetRotSpeed = 0.001; // Tốc độ mặc định khi đứng yên
+                
+                // ĐÃ CẬP NHẬT: Tăng tốc độ quay khi đưa tay sang 2 bên
+                if (handX < 0.4) targetRotSpeed = -0.035; // Bên trái (Nhanh hơn)
+                else if (handX > 0.6) targetRotSpeed = 0.035; // Bên phải (Nhanh hơn)
+                
+                rotationSpeed += (targetRotSpeed - rotationSpeed) * 0.05;
+                cardGroup.rotation.y += rotationSpeed;
+
+                cardGroup.children.forEach((c, i) => { 
+                    if(!c.userData.isPicked) c.position.y = Math.sin(time * 0.0015 + i) * 0.15; 
+                });
+            }
+
+            if(starFieldMesh) {
+                starFieldMesh.rotation.y = time * 0.00005;
+                starFieldMesh.material.size = Math.sin(time * 0.002) * 0.1 + 0.9;
+            }
+            renderer.render(scene, camera);
+        }
+
+        init(); animate();
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+        
+        const videoElement = document.getElementById('input-video');
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cam.start();
+
+    </script>
+</body>
+</html>
