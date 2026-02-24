@@ -633,25 +633,45 @@
                         }
                         `;
 
-                    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${openaiKey}`
-                        },
-                        body: JSON.stringify({
-                            model: 'gpt-4o-mini',
-                            messages: [
-                                { role: 'system', content: 'You are a helpful tarot reader.' },
-                                { role: 'user', content: prompt },
-                                { role: 'user', content: JSON.stringify({cards: cardsForAI}) }
-                            ],
-                            temperature: 0.7,
-                            max_tokens: 700
-                        })
-                    });
+                    const requestPayload = {
+                        model: 'gpt-4o-mini',
+                        messages: [
+                            { role: 'system', content: 'You are a helpful tarot reader.' },
+                            { role: 'user', content: prompt },
+                            { role: 'user', content: JSON.stringify({cards: cardsForAI}) }
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 700
+                    };
 
-                    if (!resp.ok) throw new Error('AI request failed: ' + resp.status + ' ' + resp.statusText);
+                    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+                    let resp;
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        resp = await fetch('https://api.openai.com/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${openaiKey}`
+                            },
+                            body: JSON.stringify(requestPayload)
+                        });
+
+                        if (resp.ok) break;
+                        if (resp.status !== 429 || attempt === 2) {
+                            throw new Error('AI request failed: ' + resp.status + ' ' + resp.statusText);
+                        }
+
+                        const retryAfterHeader = resp.headers.get('retry-after');
+                        const retryAfterSeconds = Number.parseInt(retryAfterHeader, 10);
+                        const backoffMs = Number.isFinite(retryAfterSeconds)
+                            ? retryAfterSeconds * 1000
+                            : (attempt + 1) * 2000;
+                        await sleep(backoffMs);
+                    }
+
+                    if (!resp || !resp.ok) {
+                        throw new Error('AI request failed: unknown response');
+                    }
                     const j = await resp.json();
                     const text = j?.choices?.[0]?.message?.content || j?.choices?.[0]?.text;
                     // try to extract JSON from model output
@@ -709,8 +729,12 @@
                     content.innerHTML = html;
                 } catch (err) {
                     console.error(err);
+                    const errMessage = String(err?.message || '');
+                    const aiRateLimitNotice = errMessage.includes('429')
+                        ? '<p style="margin-top: 0; color: #f8d7da;"><strong>AI đang quá tải tạm thời (429).</strong> Hệ thống đã chuyển sang phần giải nghĩa mặc định để bạn không bị gián đoạn. Bạn có thể thử lại sau khoảng 1-2 phút.</p>'
+                        : '';
                     // on error, show fallback meanings
-                    let html = '';
+                    let html = aiRateLimitNotice;
                     storedCards.forEach((c, i) => {
                         const data = c.userData.data;
                         const isRev = !!c.userData.reversed;
